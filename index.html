@@ -1,0 +1,238 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Halloween Party - Escáner QR</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    body {
+      background: #241333;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 18px;
+      margin: 0;
+    }
+
+    h1 { color: #ff9d24; }
+
+    .panel {
+      background: #432454;
+      padding: 18px;
+      border-radius: 16px;
+      margin: 14px auto;
+      max-width: 420px;
+    }
+
+    #reader {
+      background: white;
+      color: black;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    button {
+      background: #ff8c1a;
+      color: #241333;
+      border: 0;
+      padding: 13px 22px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: bold;
+      margin: 8px;
+    }
+
+    button:disabled {
+      opacity: .5;
+    }
+
+    #resultado {
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .estado {
+      color: #ffbd70;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>🎃 HALLOWEEN PARTY 👻</h1>
+  <h3>Control de entrada</h3>
+
+  <div class="panel">
+    <div id="reader"></div>
+
+    <p id="resultado">Pulsa iniciar para escanear.</p>
+    <p id="estado" class="estado">Escáner detenido</p>
+
+    <button id="btnIniciar" onclick="iniciar()">📷 Iniciar escáner</button>
+    <button onclick="detener()">Detener</button>
+  </div>
+
+  <div class="panel">
+    <h3>🦇 Control de invitados</h3>
+    <p>Registrados: <span id="registrados">0</span></p>
+    <p>Ingresados: <span id="ingresados">0</span></p>
+    <p>Pendientes: <span id="pendientes">0</span></p>
+  </div>
+
+<script>
+  // IMPORTANTE: aquí colocaremos la URL de Apps Script.
+  const API_URL = "PEGA_AQUI_URL_DE_APPS_SCRIPT";
+
+  let scanner = null;
+  let procesando = false;
+  let activo = false;
+
+  function consultarAPI(parametros) {
+    return new Promise((resolve, reject) => {
+      const callback = "respuestaQR_" + Date.now() +
+        "_" + Math.floor(Math.random() * 100000);
+
+      const script = document.createElement("script");
+      const tiempo = setTimeout(() => {
+        limpiar();
+        reject(new Error("Tiempo de espera agotado."));
+      }, 15000);
+
+      function limpiar() {
+        clearTimeout(tiempo);
+        script.remove();
+        delete window[callback];
+      }
+
+      window[callback] = datos => {
+        limpiar();
+        resolve(datos);
+      };
+
+      const query = new URLSearchParams({
+        ...parametros,
+        callback: callback
+      });
+
+      script.src = API_URL + "?" + query.toString();
+      script.onerror = () => {
+        limpiar();
+        reject(new Error("No se pudo conectar con el servidor."));
+      };
+
+      document.body.appendChild(script);
+    });
+  }
+
+  async function iniciar() {
+    if (activo || procesando) return;
+
+    try {
+      document.getElementById("resultado").innerText =
+        "Solicitando acceso a la cámara...";
+
+      if (!scanner) {
+        scanner = new Html5Qrcode("reader");
+      }
+
+      await scanner.start(
+        { facingMode: "environment" },
+        {
+          fps: 10,
+          qrbox: { width: 230, height: 230 }
+        },
+        codigo => registrarQR(codigo)
+      );
+
+      activo = true;
+
+      document.getElementById("estado").innerText =
+        "📷 Cámara activa";
+
+      document.getElementById("resultado").innerText =
+        "Buscando código QR...";
+
+    } catch (error) {
+      document.getElementById("resultado").innerText =
+        "No se pudo abrir la cámara: " + error.message;
+    }
+  }
+
+  async function registrarQR(codigo) {
+    if (procesando || !activo) return;
+
+    procesando = true;
+
+    try {
+      await scanner.pause(true);
+
+      const respuesta = await consultarAPI({
+        action: "register",
+        codigo: codigo
+      });
+
+      document.getElementById("resultado").innerText =
+        respuesta.mensaje || "Respuesta recibida.";
+
+      await actualizarResumen();
+
+      await new Promise(resolve => setTimeout(resolve, 2500));
+
+    } catch (error) {
+      document.getElementById("resultado").innerText =
+        "Error: " + error.message;
+    } finally {
+      procesando = false;
+
+      if (activo && scanner) {
+        try {
+          await scanner.resume();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+  }
+
+  async function detener() {
+    activo = false;
+
+    if (scanner && scanner.isScanning) {
+      try {
+        await scanner.stop();
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    document.getElementById("estado").innerText =
+      "Escáner detenido";
+  }
+
+  async function actualizarResumen() {
+    try {
+      const datos = await consultarAPI({ action: "summary" });
+
+      document.getElementById("registrados").innerText =
+        datos.registrados;
+
+      document.getElementById("ingresados").innerText =
+        datos.ingresados;
+
+      document.getElementById("pendientes").innerText =
+        datos.pendientes;
+
+    } catch (error) {
+      console.error("Error actualizando resumen:", error);
+    }
+  }
+
+  actualizarResumen();
+  setInterval(actualizarResumen, 10000);
+</script>
+
+</body>
+</html>
